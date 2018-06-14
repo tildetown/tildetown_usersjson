@@ -4,6 +4,7 @@ extern crate serde;
 extern crate serde_json;
 extern crate regex;
 extern crate sha2;
+extern crate chrono;
 
 use csv::ReaderBuilder;
 use std::collections::HashMap;
@@ -12,11 +13,13 @@ use std::fs::{self, File};
 use std::io::Write;
 use sha2::{Sha256, Digest};
 use std::time::UNIX_EPOCH;
+use chrono::NaiveDateTime;
 
 #[derive(Serialize, Debug)]
 pub struct UsersEntry {
     homepage: String,
-    modtime: u64,
+    modtime_unix: u64,
+    modtime: String,
     edited: usize,
     ringmember: usize
 }
@@ -91,15 +94,19 @@ fn main() {
                             0
                         };
                         let modified = m.modified().unwrap();
-                        let modtime = match modified.duration_since(UNIX_EPOCH) {
+                        let modtime_unix = match modified.duration_since(UNIX_EPOCH) {
                             Ok(t) => t.as_secs(),
                             Err(_) => 0
                         };
+                        let modtime = NaiveDateTime::from_timestamp(modtime_unix as _, 0)
+                            .format("%a %b %e %H:%M:%S %Y")
+                            .to_string();
                         ret.insert(rec.username.clone(), UsersEntry {
                             homepage: format!("{}{}", TILDE_URL, rec.username),
                             edited,
                             ringmember,
-                            modtime
+                            modtime,
+                            modtime_unix
                         });
                     },
                     Err(e) => {

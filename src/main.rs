@@ -1,3 +1,5 @@
+// to anyone reading this: I'm sorry, it's not exactly perfect.
+
 extern crate csv;
 extern crate serde;
 #[macro_use] extern crate serde_derive;
@@ -7,13 +9,13 @@ extern crate sha2;
 extern crate chrono;
 
 use csv::ReaderBuilder;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use regex::Regex;
 use std::fs::{self, File};
 use std::io::Write;
 use sha2::{Sha256, Digest};
 use std::time::UNIX_EPOCH;
-use chrono::NaiveDateTime;
+use chrono::{NaiveDateTime, Utc};
 
 #[derive(Serialize, Debug)]
 pub struct UsersEntry {
@@ -41,7 +43,10 @@ fn main() {
     println!("[+] eta's users.json generator");
     let output = ::std::env::args().nth(1)
         .expect("please provide an output filename as the 1st argument");
-    println!("[+] outputting to {}", output);
+    let html_output = ::std::env::args().nth(2)
+        .expect("please provide a HTML output filename as the 2st argument");
+    println!("[+] outputting to {} (JSON)", output);
+    println!("[+] outputting to {} (HTML)", html_output);
     println!("[+] reading /etc/login.defs");
     let defs = fs::read_to_string("/etc/login.defs")
         .expect("reading /etc/login.defs");
@@ -62,7 +67,7 @@ fn main() {
         .has_headers(false)
         .from_path("/etc/passwd")
         .expect("reading /etc/passwd");
-    let mut ret: HashMap<String, UsersEntry> = HashMap::new();
+    let mut ret: BTreeMap<String, UsersEntry> = BTreeMap::new();
     for rec in rdr.deserialize() {
         let rec: PasswdLine = rec.expect("parsing passwd line");
         println!("[+] processing user {}", rec.username);
@@ -121,11 +126,85 @@ fn main() {
             }
         }
     }
-    println!("[+] writing json");
+    println!("[+] writing json & HTML");
     let json = serde_json::to_string_pretty(&ret).expect("serializing");
     let mut file = File::create(output)
         .expect("creating output file");
+    let mut html_file = File::create(html_output)
+        .expect("creating HTML output file");
     file.write_all(json.as_bytes())
         .expect("writing to output file");
+
+    // this...isn't great.
+
+    write!(html_file, r#"
+<!DOCTYPE html>
+<html>
+<head>
+<title>eta's townies list</title>
+</head>
+<body>
+<pre>
+<h2>list of townies</h2>
+===============
+
+lists townies with a reachable homepage 
+last updated {}; updates every hour, on the hour
+maintained by <a href="//tilde.town/~eeeeeta">~eeeeeta</a>
+source code <a href="https://github.com/eeeeeta/tildetown_usersjson/">here</a>
+view log <a href="//tilde.town/~eeeeeta/users.log">here</a> (if you aren't showing up)
+
+<h3><a href="//tilde.town/~eeeeeta/ring/join.html">~ring</a> members</h3>
+===============
+"#, Utc::now()).unwrap();
+    write_townies(&mut html_file, &ret, TownieFilter::RingMember).unwrap();
+    write!(html_file, r#"
+
+<h3>townies with non-default homepages</h3>
+===============
+"#).unwrap();
+    write_townies(&mut html_file, &ret, TownieFilter::NonDefault).unwrap();
+    write!(html_file, r#"
+
+<h3>all townies with homepages</h3>
+===============
+"#).unwrap();
+    write_townies(&mut html_file, &ret, TownieFilter::Other).unwrap();
+    write!(html_file, r#"
+</pre>
+</body>
+</html>"#).unwrap();
     println!("[+] done!");
+}
+#[derive(Copy, Clone, Debug)]
+pub enum TownieFilter {
+    RingMember,
+    NonDefault,
+    Other
+}
+fn write_townies<R: Write>(out: &mut R, ret: &BTreeMap<String, UsersEntry>, mode: TownieFilter) -> ::std::io::Result<()> {
+    let mut members = 0;
+    for (uname, ent) in ret.iter() {
+        match mode {
+            TownieFilter::RingMember => {
+                if ent.ringmember != 1 {
+                    continue;
+                }
+            },
+            TownieFilter::NonDefault => {
+                if ent.edited == 0 {
+                    continue;
+                }
+            },
+            _ => {}
+        }
+        write!(out, "- <a href=\"{}\">~{}</a> (updated {})\n",
+        ent.homepage, uname,
+        NaiveDateTime::from_timestamp(ent.modtime_unix as _, 0)
+        .format("%Y-%m-%d")
+        .to_string())?;
+        members += 1;
+    }
+    write!(out, "\n({} in total)", members)?;
+    Ok(())
 }

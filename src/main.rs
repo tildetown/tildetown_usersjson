@@ -23,7 +23,8 @@ pub struct UsersEntry {
     modtime_unix: u64,
     modtime: String,
     edited: usize,
-    ringmember: usize
+    ringmember: usize,
+    has_public_html: bool
 }
 
 #[derive(Deserialize, Debug)]
@@ -111,20 +112,29 @@ fn main() {
                             edited,
                             ringmember,
                             modtime,
-                            modtime_unix
+                            modtime_unix,
+                            has_public_html: true
                         });
+                        continue;
                     },
                     Err(e) => {
-                        println!("[*] couldn't read {}, skipping: {}", path, e);
-                        continue;
+                        println!("[*] couldn't read {}: {}", path, e);
                     }
                 }
             },
             Err(e) => {
-                println!("[*] couldn't get metadata for {}, skipping: {}", path, e);
-                continue;
+                println!("[*] couldn't get metadata for {}: {}", path, e);
             }
         }
+        println!("[*] adding user as unreadable");
+        ret.insert(rec.username.clone(), UsersEntry {
+            homepage: format!("{}{}", TILDE_URL, rec.username),
+            edited: 0,
+            ringmember: 0,
+            modtime: "never".into(),
+            modtime_unix: 0,
+            has_public_html: false
+        });
     }
     println!("[+] writing json & HTML");
     let json = serde_json::to_string_pretty(&ret).expect("serializing");
@@ -164,10 +174,17 @@ view log <a href="//tilde.town/~eeeeeta/users.log">here</a> (if you aren't showi
 ===============
 "#).unwrap();
     write_townies(&mut html_file, &ret, TownieFilter::NonDefault).unwrap();
+write!(html_file, r#"
+
+<h3>townies with homepages</h3>
+===============
+"#).unwrap();
+    write_townies(&mut html_file, &ret, TownieFilter::PageExists).unwrap();
     write!(html_file, r#"
 
-<h3>all townies with homepages</h3>
+<h3>all townies (incl. without homepages)</h3>
 ===============
+<i>NB: modtimes for townies without any homepage will be 1970-01-01, the start of the unix epoch, because we have no modtime info</i>
 "#).unwrap();
     write_townies(&mut html_file, &ret, TownieFilter::Other).unwrap();
     write!(html_file, r#"
@@ -180,6 +197,7 @@ view log <a href="//tilde.town/~eeeeeta/users.log">here</a> (if you aren't showi
 pub enum TownieFilter {
     RingMember,
     NonDefault,
+    PageExists,
     Other
 }
 fn write_townies<R: Write>(out: &mut R, ret: &BTreeMap<String, UsersEntry>, mode: TownieFilter) -> ::std::io::Result<()> {
@@ -193,6 +211,11 @@ fn write_townies<R: Write>(out: &mut R, ret: &BTreeMap<String, UsersEntry>, mode
             },
             TownieFilter::NonDefault => {
                 if ent.edited == 0 {
+                    continue;
+                }
+            },
+            TownieFilter::PageExists => {
+                if !ent.has_public_html {
                     continue;
                 }
             },
